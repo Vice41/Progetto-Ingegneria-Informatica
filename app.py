@@ -3,57 +3,10 @@ from flask import Flask, request, render_template
 from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-api_key = os.getenv("AZURE_OPENAI_API_KEY")
-azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 
-print("API Key:", api_key)
-#print("Endpoint:", azure_endpoint)
-
-#token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
-
-client = AzureOpenAI(
-    api_key=api_key,
-    api_version="2024-02-01",
-    azure_endpoint=azure_endpoint
-)
-
-#client = AzureOpenAI(
-#    azure_endpoint="https://fairnesschatbot.openai.azure.com/",
-#    azure_ad_token_provider=token_provider,
-#    api_version="2024-02-01",
-#)
-
-app = Flask(__name__)
-
-messagesMemory = []
-
-# Function to add a new message while maintaining the limit of 5 messages
-def add_message(msgList, new_message):
-    msgList.append(new_message)
-    if len(msgList) > 5:
-        del msgList[0]  # Delete the oldest message if the limit is exceeded
-
-@app.route('/')
-def home():
-    # just render the HTML homepage
-    return render_template("index.html")
-
-
-@app.route('/process', methods=['POST'])
-def detect_intent():
-    text=request.form["message"]
-    add_message(messagesMemory, 
-            {
-                "role": "user",
-                "content": text,
-            }
-        )
-    currentMessages=[
-            {
-                "role": "system",
-                "content": """
+initialPrompt = """
                 You are a helpful assistant and should answer me clearly.
-                Specifically you are a chatbot. Your responces should be short and undestandable.
+                Specifically you are a chatbot. Your responces should be short and undestandable (less than 800 characters!).
                 You should guide the user into asking meaningful questions, and navigate the results.
                 I have a dataset made of women that might have diabetes, with different data and the outcome (diabetes or not diabetes)
                 the columns are: Pregnancies	Glucose	BloodPressure	SkinThickness	Insulin	BMI	DiabetesPedigreeFunction	Outcome		AgeCategory
@@ -66,22 +19,22 @@ def detect_intent():
                 (a.k.a. statistical parity, equal acceptance rate, benchmarking). A classifier satisfies this definition if subjects in both protected and unprotected groups have equal probability of being assigned to the positive predicted class.
 
                 Predictive Parity: (Y=1|d=1,G=priv) = (Y=1|d=1,G=discr)
-                (a.k.a. outcome test). A classifier satisfies this definition if both protected and unprotected groups have equal PPV – the probability of a subject with positive predictive value to truly belong to the positive class.
+                (a.k.a. outcome test). A classifier satisfies this definition if both protected and unprotected groups have equal PPV : the probability of a subject with positive predictive value to truly belong to the positive class.
 
                 Predictive Equality: (d=1|Y=0,G=priv) = (d=1|Y=0,G=discr)
-                (a.k.a. False positive error rate balance). A classifier satisfies this definition if both protected and unprotected groups have equal FPR – the probability of a subject in the negative class to have a positive predictive value.
+                (a.k.a. False positive error rate balance). A classifier satisfies this definition if both protected and unprotected groups have equal FPR : the probability of a subject in the negative class to have a positive predictive value.
 
                 Equal Opportunity: (d=0|Y=1,G=priv) = (d=0|Y=1,G=discr)
-                (a.k.a. False negative error rate balance). A classifier satisfies this definition if both protected and unprotected groups have equal FNR – the probability of a subject in a positive class to have a negative predictive value.
+                (a.k.a. False negative error rate balance). A classifier satisfies this definition if both protected and unprotected groups have equal FNR : the probability of a subject in a positive class to have a negative predictive value.
 
                 Equalized Odds: (d=1|Y=i,G=priv) = (d=1|Y=i,G=discr), i ∈ 0,1
                 (a.k.a. conditional procedure accuracy equality and disparate mistreatment). This definition combines the previous two: a classifier satisfies the definition if protected and unprotected groups have equal TPR and equal FPR. Mathematically, it is equivalent to the conjunction of conditions for false positive error rate balance and false negative error rate balance definitions.
 
                 ConditionalUseAccuracyEquality: (Y=1|d=1, G=priv) = (Y=1|d=1,G=discr) and (Y=0|d=0,G=priv) = (Y=0|d=0,G=discr)
-                This definition conjuncts two conditions: equal PPV and NPV – the probability of subjects with positive predictive value to truly belong to the positive class and the probability of subjects with negative predictive value to truly belong to the negative class.
+                This definition conjuncts two conditions: equal PPV and NPV : the probability of subjects with positive predictive value to truly belong to the positive class and the probability of subjects with negative predictive value to truly belong to the negative class.
 
                 Overall Accuracy Equality: (d=Y, G=priv) = (d=Y, G=priv)
-                A classifier satisfies this definition if both protected and unprotected groups have equal prediction accuracy – the probability of a subject from either positive or negative class to be assigned to its respective class. The definition assumes that true negatives are as desirable as true positives.
+                A classifier satisfies this definition if both protected and unprotected groups have equal prediction accuracy : the probability of a subject from either positive or negative class to be assigned to its respective class. The definition assumes that true negatives are as desirable as true positives.
 
                 Treatment Equality: (Y=1, d=0, G=priv)/(Y=0, d=1, G=priv) = (Y=1, d=0, G=discr)/(Y=0, d=1, G=discr)
                 This definition looks at the ratio of errors that the classifier makes rather than at its accuracy. A classifier satisfies this definition if both protected and unprotected groups have an equal ratio of false negatives and false positives.
@@ -121,14 +74,53 @@ def detect_intent():
                 TreatmentEquality	-1	-1
                 FORParity	1	0.21283
 
-                for a non-expert user possible themes to navigate could be:
+                For a non-expert user possible routes to navigate could be:
                 What is fairness in the context of ML?
                 Why so many metrics and which one to use.
                 How to interpret the results.
                 ....and so on.
+                So when the conversation gets stale and the user doesnt know what to ask, suggest these topics.
 
                 From the next message your conversation with the user shall begin.
-                """,
+                """
+
+api_key = os.getenv("AZURE_OPENAI_API_KEY")
+azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+client = AzureOpenAI(
+    api_key=api_key,
+    api_version="2024-02-01",
+    azure_endpoint=azure_endpoint
+)
+
+app = Flask(__name__)
+
+messagesMemory = []
+
+# Function to add a new message while maintaining the limit of 5 messages
+def add_message(msgList, new_message):
+    msgList.append(new_message)
+    if len(msgList) > 5:
+        del msgList[0]  # Delete the oldest message if the limit is exceeded
+
+@app.route('/')
+def home():
+    # just render the HTML homepage
+    return render_template("index.html")
+
+@app.route('/process', methods=['POST'])
+def detect_intent():
+    text=request.form["message"]
+    add_message(messagesMemory, 
+            {
+                "role": "user",
+                "content": text,
+            }
+        )
+    currentMessages=[
+            {
+                "role": "system",
+                "content": initialPrompt,
             },
         ]
     #add the up to the last 5 messages as history
@@ -138,10 +130,8 @@ def detect_intent():
     chat_completion = client.chat.completions.create(
         model="fairBot",
         messages=currentMessages,
-        #model="gpt-35-turbo",
     )
 
-    print(chat_completion)
     add_message(messagesMemory, 
             {
                 "role": "assistant",
@@ -149,8 +139,6 @@ def detect_intent():
             }
         )
     
-    
-
     return str(chat_completion.choices[0].message.content)
 
 
